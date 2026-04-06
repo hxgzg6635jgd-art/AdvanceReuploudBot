@@ -28,7 +28,7 @@ def init_database():
         )
     ''')
     
-    # पोस्ट हिस्ट्री टेबल (कौन सी पोस्ट कब डिलीट/रिपोस्ट हुई)
+    # पोस्ट हिस्ट्री टेबल
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +43,7 @@ def init_database():
         )
     ''')
     
-    # डिफॉल्ट सेटिंग्स डालें (अगर मौजूद नहीं हैं)
+    # डिफॉल्ट सेटिंग्स
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('source_channel', 'None')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('delete_after_seconds', '3600')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('repost_enabled', 'True')")
@@ -54,7 +54,6 @@ def init_database():
     print("✅ डेटाबेस इनिशियलाइज़ हो गया")
 
 def get_setting(key):
-    """सेटिंग वैल्यू लें"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -80,7 +79,6 @@ def get_setting(key):
     return None
 
 def set_setting(key, value):
-    """सेटिंग वैल्यू सेट करें"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -91,33 +89,24 @@ def set_setting(key, value):
     conn.close()
 
 def save_post(message_id, chat_id, text, media_type=None, file_id=None):
-    """पोस्ट डेटाबेस में सेव करें"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
     delete_at = datetime.now() + timedelta(seconds=get_setting("delete_after_seconds"))
-    
     cursor.execute('''
         INSERT INTO posts (message_id, chat_id, text, media_type, file_id, created_at, delete_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     ''', (message_id, chat_id, text, media_type, file_id, datetime.now(), delete_at))
-    
     conn.commit()
     conn.close()
 
 def update_post_status(message_id, status):
-    """पोस्ट का स्टेटस अपडेट करें"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE posts SET status = ? WHERE message_id = ?",
-        (status, message_id)
-    )
+    cursor.execute("UPDATE posts SET status = ? WHERE message_id = ?", (status, message_id))
     conn.commit()
     conn.close()
 
 def get_last_post():
-    """आखिरी पोस्ट लें"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -125,7 +114,6 @@ def get_last_post():
     )
     result = cursor.fetchone()
     conn.close()
-    
     if result:
         return {
             "message_id": result[0],
@@ -137,15 +125,11 @@ def get_last_post():
     return None
 
 def get_all_active_posts():
-    """सभी एक्टिव पोस्ट लें"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT message_id, chat_id, text, media_type, file_id, delete_at FROM posts WHERE status = 'active'"
-    )
+    cursor.execute("SELECT message_id, chat_id, text, media_type, file_id, delete_at FROM posts WHERE status = 'active'")
     results = cursor.fetchall()
     conn.close()
-    
     posts = []
     for result in results:
         posts.append({
@@ -158,7 +142,6 @@ def get_all_active_posts():
         })
     return posts
 
-# ===== डेटाबेस इनिशियलाइज़ करें =====
 init_database()
 
 # ===== बॉट बनाएं =====
@@ -166,11 +149,9 @@ bot = Application.builder().token(TOKEN).updater(None).build()
 
 # ===== मेन मेनू =====
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id=None):
-    """मेन मेनू दिखाएं"""
     if chat_id is None:
         chat_id = update.effective_chat.id
     
-    # डेटाबेस से करंट सेटिंग्स लें
     source_channel = get_setting("source_channel")
     delete_time = get_setting("delete_after_seconds")
     repost_enabled = get_setting("repost_enabled")
@@ -188,30 +169,21 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id=
     text = f"""
 🤖 *बॉट कंट्रोल पैनल*
 
-यहाँ से आप बॉट को कंट्रोल कर सकते हैं:
+📢 *चैनल:* `{source_channel if source_channel else '❌ सेट नहीं'}`
+⏰ *समय:* {delete_time} सेकंड ({round(delete_time/3600, 1)} घंटे)
+🔄 *रिपोस्ट:* {'✅ चालू' if repost_enabled else '❌ बंद'}
+📝 *एक्टिव पोस्ट:* {len(get_all_active_posts())}
 
-📢 *चैनल सेट करें* - कौन सा चैनल मॉनिटर करना है
-⏰ *समय सेट करें* - पोस्ट कितने समय बाद डिलीट/रिपोस्ट होगी
-🔄 *रिपोस्ट ऑन/ऑफ* - रिपोस्ट फीचर को चालू/बंद करें
-📊 *स्टेटस देखें* - मौजूदा सेटिंग्स देखें
-
-*मौजूदा सेटिंग्स (डेटाबेस से):*
-• चैनल: `{source_channel if source_channel else '❌ सेट नहीं'}`
-• समय: {delete_time} सेकंड ({round(delete_time/3600, 1)} घंटे)
-• रिपोस्ट: {'✅ चालू' if repost_enabled else '❌ बंद'}
-• एक्टिव पोस्ट: {len(get_all_active_posts())}
+नीचे दिए बटन से कंट्रोल करें:
 """
-    
     await context.bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=reply_markup)
 
 # ===== कमांड हैंडलर =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/start कमांड"""
-    await update.message.reply_text("🚀 बॉट शुरू हो गया! सारी सेटिंग्स डेटाबेस में सेव होंगी। कृपया नीचे दिए मेनू का उपयोग करें।")
+    await update.message.reply_text("🚀 बॉट शुरू हो गया! सारी सेटिंग्स डेटाबेस में सेव होंगी।")
     await main_menu(update, context)
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/menu कमांड - मेनू दिखाएं"""
     await main_menu(update, context)
 
 # ===== कॉलबैक हैंडलर =====
@@ -226,11 +198,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📢 *चैनल सेट करें*\n\n"
             "कृपया अपने चैनल का यूजरनेम या आईडी भेजें।\n\n"
             "उदाहरण: @my_channel या -1001234567890\n\n"
-            "⚠️ बॉट को चैनल में एडमिन बनाना न भूलें!\n\n"
-            "💾 यह सेटिंग डेटाबेस में सेव हो जाएगी।",
+            "⚠️ बॉट को चैनल में एडमिन बनाना न भूलें!",
             parse_mode='Markdown'
         )
-        
+    
     elif data == "set_time":
         delete_time = get_setting("delete_after_seconds")
         keyboard = [
@@ -240,15 +211,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("24 घंटे (86400 सेकंड)", callback_data="time_86400")],
             [InlineKeyboardButton("2 दिन (172800 सेकंड)", callback_data="time_172800")],
             [InlineKeyboardButton("7 दिन (604800 सेकंड)", callback_data="time_604800")],
-            [InlineKeyboardButton("30 दिन (2592000 सेकंड)", callback_data="time_2592000")],
             [InlineKeyboardButton("🎯 कस्टम समय", callback_data="time_custom")],
             [InlineKeyboardButton("◀️ वापस", callback_data="back")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            f"⏰ *डिलीट और रिपोस्ट का समय चुनें*\n\n"
-            f"मौजूदा समय: {delete_time} सेकंड ({round(delete_time/3600, 1)} घंटे)\n\n"
-            f"💾 यह सेटिंग डेटाबेस में सेव हो जाएगी।",
+            f"⏰ *डिलीट और रिपोस्ट का समय चुनें*\n\nमौजूदा समय: {delete_time} सेकंड",
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
@@ -258,21 +226,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if time_value == "custom":
             context.user_data["awaiting_custom_time"] = True
             await query.edit_message_text(
-                "🎯 *कस्टम समय*\n\n"
-                "कृपया सेकंड में समय भेजें।\n"
-                "उदाहरण: 3600 (1 घंटा), 86400 (24 घंटे)\n\n"
-                "📝 सिर्फ नंबर भेजें (सेकंड में):\n\n"
-                "💾 यह सेटिंग डेटाबेस में सेव हो जाएगी।",
+                "🎯 *कस्टम समय*\n\nकृपया सेकंड में समय भेजें।\nउदाहरण: 3600, 86400",
                 parse_mode='Markdown'
             )
         else:
             seconds = int(time_value)
             set_setting("delete_after_seconds", seconds)
-            await query.edit_message_text(
-                f"✅ समय अपडेट हो गया और डेटाबेस में सेव हो गया!\n\n"
-                f"नया समय: {seconds} सेकंड ({round(seconds/3600, 1)} घंटे)\n\n"
-                f"अब नई पोस्ट {seconds} सेकंड बाद डिलीट और रिपोस्ट होगी।"
-            )
+            await query.edit_message_text(f"✅ समय अपडेट: {seconds} सेकंड")
             await asyncio.sleep(2)
             await main_menu(update, context, query.message.chat.id)
     
@@ -280,12 +240,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current = get_setting("repost_enabled")
         new_value = not current
         set_setting("repost_enabled", new_value)
-        status_text = "चालू ✅" if new_value else "बंद ❌"
-        await query.edit_message_text(
-            f"🔄 रिपोस्ट फीचर {status_text} कर दिया गया!\n\n"
-            f"अब रिपोस्ट: {status_text}\n\n"
-            f"💾 यह सेटिंग डेटाबेस में सेव हो गई है।"
-        )
+        await query.edit_message_text(f"🔄 रिपोस्ट {'चालू' if new_value else 'बंद'}")
         await asyncio.sleep(2)
         await main_menu(update, context, query.message.chat.id)
     
@@ -295,29 +250,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         repost_enabled = get_setting("repost_enabled")
         active_posts = get_all_active_posts()
         
-        status_text = f"""
-📊 *बॉट स्टेटस (डेटाबेस से)*
-
-📢 *सोर्स चैनल:* {source_channel if source_channel else '❌ सेट नहीं'}
-⏰ *डिलीट/रिपोस्ट समय:* {delete_time} सेकंड ({round(delete_time/3600, 1)} घंटे)
-🔄 *रिपोस्ट स्टेटस:* {'✅ चालू' if repost_enabled else '❌ बंद'}
-📝 *एक्टिव पोस्ट:* {len(active_posts)}
-
-🤖 *बॉट स्टेटस:* ऑनलाइन
-💾 *डेटाबेस:* SQLite (परमानेंट)
-        """
-        
-        # पोस्ट की लिस्ट दिखाएं
-        if active_posts:
-            status_text += "\n\n📋 *एक्टिव पोस्ट:*\n"
-            for i, post in enumerate(active_posts[:5], 1):
-                delete_time_str = post["delete_at"].strftime("%Y-%m-%d %H:%M:%S") if post["delete_at"] else "N/A"
-                status_text += f"{i}. मैसेज ID: {post['message_id']} (डिलीट: {delete_time_str})\n"
-            if len(active_posts) > 5:
-                status_text += f"\n... और {len(active_posts) - 5} पोस्ट"
-        
-        await query.edit_message_text(status_text, parse_mode='Markdown')
-        await asyncio.sleep(5)
+        text = f"""
+📊 *बॉट स्टेटस*
+📢 चैनल: {source_channel if source_channel else '❌ सेट नहीं'}
+⏰ समय: {delete_time} सेकंड
+🔄 रिपोस्ट: {'चालू' if repost_enabled else 'बंद'}
+📝 एक्टिव पोस्ट: {len(active_posts)}
+"""
+        await query.edit_message_text(text, parse_mode='Markdown')
+        await asyncio.sleep(3)
         await main_menu(update, context, query.message.chat.id)
     
     elif data == "clear_posts":
@@ -326,7 +267,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.execute("DELETE FROM posts WHERE status = 'active'")
         conn.commit()
         conn.close()
-        await query.edit_message_text("🗑️ सभी एक्टिव पोस्ट डेटाबेस से हटा दिए गए!")
+        await query.edit_message_text("🗑️ सभी पोस्ट हटा दी गईं!")
         await asyncio.sleep(2)
         await main_menu(update, context, query.message.chat.id)
     
@@ -334,7 +275,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await main_menu(update, context, query.message.chat.id)
     
     elif data == "close":
-        await query.edit_message_text("❌ मेनू बंद किया गया। फिर से खोलने के लिए /menu टाइप करें।")
+        await query.edit_message_text("❌ मेनू बंद। /menu से खोलें।")
 
 # ===== टेक्स्ट मैसेज हैंडलर =====
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -343,29 +284,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if context.user_data.get("awaiting_channel"):
         context.user_data["awaiting_channel"] = False
-        
         channel_input = text.strip()
         if channel_input.startswith("@"):
             try:
                 chat = await bot.bot.get_chat(channel_input)
                 channel_id = chat.id
             except:
-                await update.message.reply_text("❌ चैनल नहीं मिला! कृपया सही यूजरनेम डालें।")
+                await update.message.reply_text("❌ चैनल नहीं मिला!")
                 return
         else:
             try:
                 channel_id = int(channel_input)
             except:
-                await update.message.reply_text("❌ गलत फॉर्मेट! कृपया @username या नंबर आईडी डालें।")
+                await update.message.reply_text("❌ गलत फॉर्मेट!")
                 return
-        
         set_setting("source_channel", channel_id)
-        await update.message.reply_text(
-            f"✅ चैनल सेट हो गया और डेटाबेस में सेव हो गया!\n\n"
-            f"📢 चैनल आईडी: `{channel_id}`\n\n"
-            f"⚠️ याद रखें: बॉट को इस चैनल में एडमिन बनाना जरूरी है!",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(f"✅ चैनल सेट: `{channel_id}`", parse_mode='Markdown')
         await main_menu(update, context, user_id)
     
     elif context.user_data.get("awaiting_custom_time"):
@@ -373,29 +307,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             seconds = int(text)
             if seconds <= 0:
-                await update.message.reply_text("❌ कृपया 0 से बड़ा नंबर डालें!")
+                await update.message.reply_text("❌ 0 से बड़ा नंबर डालें!")
                 return
             set_setting("delete_after_seconds", seconds)
-            await update.message.reply_text(
-                f"✅ समय सेट हो गया और डेटाबेस में सेव हो गया!\n\n"
-                f"नया समय: {seconds} सेकंड ({round(seconds/3600, 1)} घंटे)"
-            )
+            await update.message.reply_text(f"✅ समय सेट: {seconds} सेकंड")
         except ValueError:
-            await update.message.reply_text("❌ कृपया सिर्फ नंबर भेजें (सेकंड में)!")
+            await update.message.reply_text("❌ सिर्फ नंबर डालें!")
         await main_menu(update, context, user_id)
-    
-    else:
-        pass
 
 # ===== चैनल से नई पोस्ट आने पर =====
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """चैनल पोस्ट हैंडलर - CHANNEL_POST की जगह ये तरीका इस्तेमाल करें"""
+    
     repost_enabled = get_setting("repost_enabled")
     if not repost_enabled:
         return
     
     source_channel = get_setting("source_channel")
     if source_channel is None:
-        print("⚠️ कोई चैनल सेट नहीं है!")
+        return
+    
+    # चेक करें कि मैसेज चैनल से है या नहीं
+    if update.channel_post is None:
         return
     
     chat_id = update.effective_chat.id
@@ -414,9 +347,9 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
                 update_post_status(last_post["message_id"], "deleted")
                 print(f"🗑️ पुरानी पोस्ट डिलीट: {last_post['message_id']}")
             except Exception as e:
-                print(f"पुरानी पोस्ट डिलीट नहीं हो पाई: {e}")
+                print(f"पुरानी पोस्ट डिलीट एरर: {e}")
         
-        # नई पोस्ट डेटा सेव करें
+        # नई पोस्ट सेव करें
         text = message.text or message.caption or ""
         media_type = None
         file_id = None
@@ -460,7 +393,7 @@ async def schedule_repost(message_id, chat_id, text, media_type, file_id, delay)
             await bot.bot.send_message(chat_id, text)
         
         update_post_status(message_id, "reposted")
-        print(f"🔄 पोस्ट रिपोस्ट हो गई: {message_id}")
+        print(f"🔄 पोस्ट रिपोस्ट: {message_id}")
         
     except Exception as e:
         print(f"❌ रिपोस्ट एरर: {e}")
@@ -497,11 +430,15 @@ class Handler(BaseHTTPRequestHandler):
 
 # ===== मेन =====
 async def main():
+    # हैंडलर रजिस्टर करें
     bot.add_handler(CommandHandler("start", start))
     bot.add_handler(CommandHandler("menu", menu))
     bot.add_handler(CallbackQueryHandler(button_callback))
     bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    bot.add_handler(MessageHandler(filters.CHANNEL_POST, handle_channel_post))
+    
+    # ✅ CHANNEL_POST के लिए सही तरीका - filters.CHANNEL_POST की जगह ये करें
+    # चैनल पोस्ट के लिए अलग से हैंडलर
+    bot.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
     
     await bot.bot.set_webhook(WEBHOOK_URL)
     print(f"✅ वेबहुक सेट: {WEBHOOK_URL}")
@@ -522,7 +459,6 @@ async def main():
 if __name__ == "__main__":
     print("=" * 50)
     print("🤖 ऑटो-डिलीट और रिपोस्ट बॉट")
-    print("💾 डेटाबेस: SQLite (परमानेंट स्टोरेज)")
-    print("📱 बॉट में /start करके कंट्रोल करें")
+    print("💾 डेटाबेस: SQLite")
     print("=" * 50)
     asyncio.run(main())
