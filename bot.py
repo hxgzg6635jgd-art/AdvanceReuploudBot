@@ -5,45 +5,44 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+# ===== कॉन्फ़िगरेशन =====
 TOKEN = os.environ["BOT_TOKEN"]
+RENDER_URL = os.environ["RENDER_EXTERNAL_URL"]
 PORT = int(os.getenv("PORT", 10000))
 
-# बॉट बनाएं
+# ===== बॉट बनाएं =====
 bot = Application.builder().token(TOKEN).updater(None).build()
 
-# कमांड हैंडलर
+# ===== कमांड हैंडलर =====
 async def start(update: Update, context):
-    await update.message.reply_text("✅ बॉट चालू है! मुझे कोई भी मैसेज भेजें।")
+    await update.message.reply_text("✅ बॉट चालू है! मुझे कोई भी मैसेज भेजें, मैं जवाब दूंगा।")
 
 async def echo(update: Update, context):
     await update.message.reply_text(f"आपने कहा: {update.message.text}")
 
+# हैंडलर रजिस्टर करें
 bot.add_handler(CommandHandler("start", start))
 bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-# Webhook सेट करने के लिए
-WEBHOOK_URL = f"https://{os.environ['RENDER_EXTERNAL_URL'].split('//')[1]}/webhook"
+# ===== वेबहुक URL =====
+WEBHOOK_URL = f"{RENDER_URL}/webhook"
 
-# HTTP सर्वर हैंडलर
-class WebhookHandler(BaseHTTPRequestHandler):
-    async def handle_updates(self, data):
+# ===== HTTP सर्वर =====
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == '/webhook':
+            length = int(self.headers['Content-Length'])
+            data = json.loads(self.rfile.read(length))
+            asyncio.create_task(self.handle_update(data))
+            self.send_response(200)
+            self.end_headers()
+    
+    async def handle_update(self, data):
         try:
             update = Update.de_json(data, bot.bot)
             await bot.update_queue.put(update)
         except Exception as e:
             print(f"Error: {e}")
-    
-    def do_POST(self):
-        if self.path == '/webhook':
-            content_length = int(self.headers['Content-Length'])
-            post_data = json.loads(self.rfile.read(content_length))
-            
-            # Async handle करें
-            asyncio.create_task(self.handle_updates(post_data))
-            
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'OK')
     
     def do_GET(self):
         if self.path == '/health':
@@ -55,21 +54,22 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.end_headers()
     
     def log_message(self, format, *args):
-        pass  # logs को साफ रखने के लिए
+        pass  # logs को साफ रखें
 
+# ===== मेन फंक्शन =====
 async def main():
-    # Webhook सेट करें
+    # वेबहुक सेट करें
     await bot.bot.set_webhook(WEBHOOK_URL)
-    print(f"✅ Webhook set to: {WEBHOOK_URL}")
+    print(f"✅ Webhook set: {WEBHOOK_URL}")
     
-    # HTTP सर्वर शुरू करें
-    server = HTTPServer(('0.0.0.0', PORT), WebhookHandler)
+    # सर्वर शुरू करें
+    server = HTTPServer(('0.0.0.0', PORT), Handler)
     
     async with bot:
         await bot.start()
-        print(f"🤬 बॉट चल रहा है on port {PORT}")
+        print(f"🤖 Bot running on port {PORT}")
         
-        # अलग थ्रेड में सर्वर चलाएं
+        # सर्वर को अलग थ्रेड में चलाएं
         import threading
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
