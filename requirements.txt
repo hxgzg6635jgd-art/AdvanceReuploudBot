@@ -1,3 +1,2 @@
-python-telegram-bot
-starlette
-uvicorn
+python-telegram-bot==20.7
+aiohttp==3.9.5
