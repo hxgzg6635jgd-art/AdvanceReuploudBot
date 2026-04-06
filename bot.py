@@ -1,7 +1,8 @@
 import os
-import asyncio
 import sqlite3
+import asyncio
 from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -132,6 +133,7 @@ init_database()
 
 # ===== बॉट बनाएं =====
 app = Application.builder().token(TOKEN).build()
+flask_app = Flask(__name__)
 
 # ===== मेन मेनू =====
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id=None):
@@ -179,9 +181,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "set_channel":
         context.user_data["awaiting_channel"] = True
         await query.edit_message_text(
-            "📢 *Set Channel*\n\n"
-            "Send your channel @username or ID:\n"
-            "Example: @my_channel or -1001234567890",
+            "📢 *Set Channel*\n\nSend your channel @username or ID:\nExample: @my_channel or -1001234567890",
             parse_mode='Markdown'
         )
     
@@ -198,10 +198,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("◀️ Back", callback_data="back")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"⏰ Current time: {delete_time} seconds\nChoose new time:",
-            reply_markup=reply_markup
-        )
+        await query.edit_message_text(f"⏰ Current: {delete_time}s\nChoose new time:", reply_markup=reply_markup)
     
     elif data.startswith("time_"):
         time_value = data.split("_")[1]
@@ -211,7 +208,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             seconds = int(time_value)
             set_setting("delete_after_seconds", seconds)
-            await query.edit_message_text(f"✅ Time updated: {seconds} seconds")
+            await query.edit_message_text(f"✅ Time updated: {seconds}s")
             await asyncio.sleep(1)
             await main_menu(update, context, query.message.chat.id)
     
@@ -348,10 +345,36 @@ async def schedule_repost(msg_id, chat_id, text, media_type, file_id, delay):
     except Exception as e:
         print(f"Repost error: {e}")
 
+# ===== Flask Webhook Routes =====
+@flask_app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = request.get_json()
+        update = Update.de_json(data, app.bot)
+        asyncio.run_coroutine_threadsafe(process_update(update), loop)
+        return 'OK', 200
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return 'Error', 500
+
+@flask_app.route('/health', methods=['GET'])
+def health():
+    return 'OK', 200
+
+async def process_update(update):
+    await app.update_queue.put(update)
+
 # ===== मेन =====
-async def main():
+async def setup_webhook():
+    webhook_url = f"https://{os.environ['RENDER_EXTERNAL_URL'].split('//')[1]}/webhook"
+    await app.bot.set_webhook(webhook_url)
+    print(f"✅ Webhook set: {webhook_url}")
+
+loop = None
+
+if __name__ == "__main__":
     print("=" * 50)
-    print("🤖 Bot Starting...")
+    print("🤖 Bot Starting with Flask...")
     print("=" * 50)
     
     app.add_handler(CommandHandler("start", start))
@@ -360,10 +383,10 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
     
-    print("✅ Handlers added")
-    print("🚀 Starting polling...")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(setup_webhook())
     
-    await app.run_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.getenv("PORT", 10000))
+    print(f"🚀 Flask server running on port {port}")
+    flask_app.run(host='0.0.0.0', port=port)
