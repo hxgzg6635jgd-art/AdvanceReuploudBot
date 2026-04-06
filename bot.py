@@ -1,86 +1,64 @@
 import os
 import asyncio
 import logging
-from starlette.applications import Starlette
-from starlette.responses import Response, PlainTextResponse
-from starlette.requests import Request
-from starlette.routing import Route
+from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-# ✅ Render अपने आप ये वेरिएबल देता है
+# कॉन्फ़िगरेशन
 TOKEN = os.environ["BOT_TOKEN"]
-URL = os.environ["RENDER_EXTERNAL_URL"]
-PORT = int(os.getenv("PORT", 8000))
+PORT = int(os.getenv("PORT", 10000))
+WEBHOOK_URL = f"https://advanceeuploadbot-7.onrender.com/webhook"
 
-# लॉगिंग सेट करें (एरर ट्रैक करने के लिए)
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ----- यहाँ अपने कमांड हैंडलर लिखें -----
+# बॉट अप्लिकेशन
+app = Application.builder().token(TOKEN).build()
+
+# हैंडलर
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/start कमांड का रिप्लाई"""
-    await update.message.reply_text("✅ बॉट ऑनलाइन है! मैं आपका मैसेज रिप्लाई कर सकता हूँ।")
+    await update.message.reply_text("✅ बॉट चालू है! मुझे कुछ भी मैसेज भेजें, मैं जवाब दूंगा।")
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """बिना कमांड वाले मैसेज का जवाब"""
-    user_message = update.message.text
-    await update.message.reply_text(f"आपने लिखा: {user_message}")
+    await update.message.reply_text(f"आपने कहा: {update.message.text}")
 
-# ----- मेन फंक्शन - वेबहुक सेटअप -----
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+# वेबहुक हैंडलर
+async def handle_webhook(request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, app.bot)
+        await app.process_update(update)
+        return web.Response(status=200)
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500)
+
+async def health(request):
+    return web.Response(text="OK", status=200)
+
+# मेन फंक्शन
 async def main():
-    # अप्लिकेशन बनाएं (updater=None बहुत जरूरी है!)
-    application = Application.builder().token(TOKEN).updater(None).build()
-
-    # हैंडलर रजिस्टर करें
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-    # वेबहुक सेट करें - यहीं से Telegram को पता चलता है कि अपडेट कहाँ भेजने हैं
-    webhook_url = f"{URL}/telegram"
-    await application.bot.set_webhook(webhook_url, allowed_updates=Update.ALL_TYPES)
-    logger.info(f"✅ वेबहुक सेट हो गया: {webhook_url}")
-
-    # वेब सर्वर बनाएं
-    async def telegram_webhook(request: Request) -> Response:
-        """Telegram से आने वाले अपडेट यहाँ आएंगे"""
-        try:
-            data = await request.json()
-            update = Update.de_json(data, application.bot)
-            await application.update_queue.put(update)
-            return Response()
-        except Exception as e:
-            logger.error(f"वेबहुक एरर: {e}")
-            return Response(status_code=500)
-
-    async def health_check(request: Request) -> PlainTextResponse:
-        """Render के Health Check के लिए - 200 OK लौटाना जरूरी है"""
-        return PlainTextResponse("ok")
-
-    starlette_app = Starlette(routes=[
-        Route("/telegram", telegram_webhook, methods=["POST"]),
-        Route("/healthcheck", health_check, methods=["GET"]),
-    ])
-
-    # सर्वर कॉन्फ़िगर करें
-    server = uvicorn.Server(
-        uvicorn.Config(
-            app=starlette_app,
-            host="0.0.0.0",  # 127.0.0.1 नहीं लिखना - Render पर काम नहीं करेगा
-            port=PORT,
-            use_colors=False,
-        )
-    )
-
-    # बॉट और सर्वर एक साथ चलाएँ
-    async with application:
-        await application.start()
-        logger.info(f"🤬 बॉट शुरू हो गया! URL: {URL}")
-        await server.serve()
-        await application.stop()
+    # वेबहुक सेट करें
+    await app.bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"✅ Webhook set to: {WEBHOOK_URL}")
+    
+    # सर्वर शुरू करें
+    runner = web.AppRunner(web.Application())
+    await runner.setup()
+    
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    runner.app.router.add_post("/webhook", handle_webhook)
+    runner.app.router.add_get("/health", health)
+    
+    await site.start()
+    logger.info(f"🤖 Bot running on port {PORT}")
+    
+    # हमेशा के लिए चलाएं
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
