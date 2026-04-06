@@ -1,64 +1,48 @@
 import os
 import asyncio
-import logging
-from aiohttp import web
+from starlette.applications import Starlette
+from starlette.responses import Response, PlainTextResponse
+from starlette.routing import Route
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# कॉन्फ़िगरेशन
 TOKEN = os.environ["BOT_TOKEN"]
-PORT = int(os.getenv("PORT", 10000))
-WEBHOOK_URL = f"https://advanceeuploadbot-7.onrender.com/webhook"
+URL = os.environ["RENDER_EXTERNAL_URL"]
+PORT = int(os.getenv("PORT", 8000))
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# बॉट बनाएं
+bot_app = Application.builder().token(TOKEN).updater(None).build()
 
-# बॉट अप्लिकेशन
-app = Application.builder().token(TOKEN).build()
-
-# हैंडलर
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ बॉट चालू है! मुझे कुछ भी मैसेज भेजें, मैं जवाब दूंगा।")
+    await update.message.reply_text("बॉट चालू है! ✅")
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"आपने कहा: {update.message.text}")
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+bot_app.add_handler(CommandHandler("start", start))
 
 # वेबहुक हैंडलर
-async def handle_webhook(request):
-    try:
-        data = await request.json()
-        update = Update.de_json(data, app.bot)
-        await app.process_update(update)
-        return web.Response(status=200)
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return web.Response(status=500)
+async def webhook(request):
+    update = Update.de_json(await request.json(), bot_app.bot)
+    await bot_app.update_queue.put(update)
+    return Response()
 
 async def health(request):
-    return web.Response(text="OK", status=200)
+    return PlainTextResponse("ok")
 
-# मेन फंक्शन
+# वेबहुक सेट करें और सर्वर चलाएं
 async def main():
-    # वेबहुक सेट करें
-    await app.bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"✅ Webhook set to: {WEBHOOK_URL}")
+    await bot_app.bot.set_webhook(f"{URL}/webhook")
     
-    # सर्वर शुरू करें
-    runner = web.AppRunner(web.Application())
-    await runner.setup()
+    starlette_app = Starlette(routes=[
+        Route("/webhook", webhook, methods=["POST"]),
+        Route("/healthcheck", health, methods=["GET"]),
+    ])
     
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    runner.app.router.add_post("/webhook", handle_webhook)
-    runner.app.router.add_get("/health", health)
+    import uvicorn
+    config = uvicorn.Config(app=starlette_app, host="0.0.0.0", port=PORT)
+    server = uvicorn.Server(config)
     
-    await site.start()
-    logger.info(f"🤖 Bot running on port {PORT}")
-    
-    # हमेशा के लिए चलाएं
-    await asyncio.Event().wait()
+    async with bot_app:
+        await bot_app.start()
+        await server.serve()
 
 if __name__ == "__main__":
     asyncio.run(main())
