@@ -1,16 +1,12 @@
 import os
 import asyncio
-import json
 import sqlite3
 from datetime import datetime, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # ===== कॉन्फ़िगरेशन =====
 TOKEN = os.environ["BOT_TOKEN"]
-RENDER_URL = os.environ["RENDER_EXTERNAL_URL"]
-PORT = int(os.getenv("PORT", 10000))
 DB_PATH = "bot_data.db"
 
 # ===== डेटाबेस सेटअप =====
@@ -43,7 +39,7 @@ def init_database():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('last_post_id', 'None')")
     conn.commit()
     conn.close()
-    print("✅ डेटाबेस इनिशियलाइज़ हो गया")
+    print("✅ डेटाबेस तैयार")
 
 def get_setting(key):
     conn = sqlite3.connect(DB_PATH)
@@ -136,7 +132,7 @@ def get_all_active_posts():
 init_database()
 
 # ===== बॉट बनाएं =====
-bot = Application.builder().token(TOKEN).updater(None).build()
+bot = Application.builder().token(TOKEN).build()
 
 # ===== मेन मेनू =====
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id=None):
@@ -311,7 +307,6 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         msg = update.channel_post
         msg_id = msg.message_id
         
-        # पिछली पोस्ट डिलीट करें
         last = get_last_post()
         if last:
             try:
@@ -320,7 +315,6 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
             except:
                 pass
         
-        # नई पोस्ट सेव करें
         text = msg.text or msg.caption or ""
         media_type = None
         file_id = None
@@ -355,41 +349,6 @@ async def schedule_repost(msg_id, chat_id, text, media_type, file_id, delay):
     except Exception as e:
         print(f"रिपोस्ट एरर: {e}")
 
-# ===== सरल वेबहुक सर्वर =====
-WEBHOOK_URL = f"{RENDER_URL}/webhook"
-
-class Handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        if self.path == '/webhook':
-            try:
-                length = int(self.headers['Content-Length'])
-                data = json.loads(self.rfile.read(length))
-                # ✅ फिक्स: सही तरीके से update प्रोसेस करें
-                update = Update.de_json(data, bot.bot)
-                # asyncio.create_task का सही उपयोग
-                asyncio.run_coroutine_threadsafe(
-                    bot.update_queue.put(update),
-                    asyncio.get_event_loop()
-                )
-                self.send_response(200)
-                self.end_headers()
-            except Exception as e:
-                print(f"वेबहुक एरर: {e}")
-                self.send_response(500)
-                self.end_headers()
-    
-    def do_GET(self):
-        if self.path == '/health' or self.path == '/healthcheck':
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'OK')
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
-        pass
-
 # ===== मेन =====
 async def main():
     print("=" * 50)
@@ -402,23 +361,11 @@ async def main():
     bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     bot.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
     
-    await bot.bot.set_webhook(WEBHOOK_URL)
-    print(f"✅ वेबहुक: {WEBHOOK_URL}")
+    print("✅ हैंडलर सेट हो गए")
+    print("🚀 पोलिंग शुरू...")
     
-    server = HTTPServer(('0.0.0.0', PORT), Handler)
-    
-    async with bot:
-        await bot.start()
-        print(f"✅ बॉट चालू है! पोर्ट: {PORT}")
-        
-        import threading
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        
-        print("🎉 बॉट पूरी तरह से तैयार है!")
-        print("📱 Telegram पर /start भेजें")
-        
-        await asyncio.Event().wait()
+    # पोलिंग शुरू करें
+    await bot.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
